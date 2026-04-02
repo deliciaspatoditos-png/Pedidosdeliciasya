@@ -2173,9 +2173,10 @@ function renderGastos(){
   });
 }
 function calcularPrecioUnitario(){
-  const total = parseInt(document.getElementById('invPrecioTotal').value) || 0;
+  const totalInput = document.getElementById('invPrecioTotal').value;
+  const total = totalInput === '' ? null : parseInt(totalInput);
   const cantidad = parseInt(document.getElementById('invCantidad').value) || 0;
-  if(total > 0 && cantidad > 0){
+  if(total !== null && total >= 0 && cantidad > 0){
     const unitario = Math.round(total / cantidad);
     document.getElementById('invPrecioUnitario').value = unitario;
   }
