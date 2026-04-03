@@ -741,24 +741,112 @@ let editandoNum = null, editandoLista = null, registrandoSeccion = null, metodoP
 let inventario = JSON.parse(localStorage.getItem('dpt_inventario')||'[]');
 let vinculosInventario = JSON.parse(localStorage.getItem('dpt_vinculos')||'{}');
 
-function guardarVinculo(itemId, invId){
-  if(invId) vinculosInventario[itemId]=invId;
-  else delete vinculosInventario[itemId];
+function guardarVinculo(itemId, invId, index){
+  if(!vinculosInventario[itemId]) vinculosInventario[itemId] = [];
+  if(Array.isArray(vinculosInventario[itemId])){
+    vinculosInventario[itemId][index] = invId;
+  } else {
+    vinculosInventario[itemId] = [vinculosInventario[itemId]];
+    vinculosInventario[itemId][index] = invId;
+  }
+  while(vinculosInventario[itemId].length > 0 &&
+        !vinculosInventario[itemId][vinculosInventario[itemId].length-1]){
+    vinculosInventario[itemId].pop();
+  }
   localStorage.setItem('dpt_vinculos', JSON.stringify(vinculosInventario));
+}
+function agregarCasillaVinculo(itemId){
+  const cont = document.getElementById('inv-links-cont-' + itemId);
+  if(!cont) return;
+  const index = cont.children.length; // índice de la nueva casilla
+  const div = document.createElement('div');
+  div.style.cssText = 'display:flex;gap:4px;align-items:center;margin-top:4px;';
+  div.innerHTML = `
+    <select onchange="guardarVinculo('${itemId}',this.value,${index})"
+      style="flex:1;border:1.5px solid #e5d8c0;border-radius:6px;padding:4px 7px;
+             font-family:'Lato',sans-serif;font-size:.72rem;color:var(--brown-dark);
+             background:var(--white);outline:none;cursor:pointer;">
+      <option value="">— Sin vincular —</option>
+      ${inventario.map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('')}
+    </select>
+    <button onclick="eliminarCasillaVinculo(this,'${itemId}')"
+      style="background:rgba(176,26,26,.12);border:1px solid rgba(176,26,26,.3);
+             color:#e87070;border-radius:5px;padding:3px 7px;cursor:pointer;
+             font-size:.75rem;font-weight:700;flex-shrink:0;">✕</button>`;
+  cont.appendChild(div);
+}
 
+function eliminarCasillaVinculo(btnEl, itemId){
+  const fila = btnEl.parentElement;
+  fila.remove();
+  // Recalcular y guardar todos los vínculos del contenedor
+  const cont = document.getElementById('inv-links-cont-' + itemId);
+  if(!cont) return;
+  vinculosInventario[itemId] = [];
+  Array.from(cont.children).forEach((div, i) => {
+    const sel = div.querySelector('select');
+    if(sel) vinculosInventario[itemId][i] = sel.value;
+  });
+  // Limpiar vacíos
+  vinculosInventario[itemId] = vinculosInventario[itemId].filter(v => v);
+  localStorage.setItem('dpt_vinculos', JSON.stringify(vinculosInventario));
 }
 let filtroInventarioActual = 'todos';
 
-function guardarEstado(){
-  localStorage.setItem('dpt_orden',JSON.stringify(orden));
-  localStorage.setItem('dpt_pedidos',JSON.stringify(pedidos));
-  localStorage.setItem('dpt_encurso',JSON.stringify(pedidosEnCurso));
-  localStorage.setItem('dpt_contador',String(contadorPedido));
-  localStorage.setItem('dpt_menu_extra',JSON.stringify(menuExtra));
-  localStorage.setItem('dpt_cierres',JSON.stringify(historialCierres));
-  localStorage.setItem('dpt_gastos',JSON.stringify(gastos));
-  localStorage.setItem('dpt_resumen_mensual',JSON.stringify(resumenMensual));
+async function guardarEstado(){
+  localStorage.setItem('dpt_orden', JSON.stringify(orden));
+  localStorage.setItem('dpt_pedidos', JSON.stringify(pedidos));
+  localStorage.setItem('dpt_encurso', JSON.stringify(pedidosEnCurso));
+  localStorage.setItem('dpt_contador', String(contadorPedido));
+  localStorage.setItem('dpt_menu_extra', JSON.stringify(menuExtra));
+  localStorage.setItem('dpt_cierres', JSON.stringify(historialCierres));
+  localStorage.setItem('dpt_gastos', JSON.stringify(gastos));
+  localStorage.setItem('dpt_resumen_mensual', JSON.stringify(resumenMensual));
   localStorage.setItem('dpt_inventario', JSON.stringify(inventario));
+  localStorage.setItem('dpt_vinculos', JSON.stringify(vinculosInventario));
+
+  if(!window._db || !window._fbDoc || !window._fbSetDoc) return;
+  try {
+    await window._fbSetDoc(window._fbDoc(window._db, 'restaurante', 'estado'), {
+      orden, pedidos, pedidosEnCurso, contadorPedido,
+      menuExtra, historialCierres, gastos,
+      resumenMensual, inventario, vinculosInventario,
+      updatedAt: new Date().toISOString()
+    });
+  } catch(e){
+    console.warn('⚠ Error guardando en Firebase:', e);
+  }
+}
+async function cargarDesdeFirebase(){
+  if(!window._db || !window._fbDoc || !window._fbGetDoc) return;
+  try {
+    showToast('☁️ Sincronizando...');
+    const snap = await window._fbGetDoc(
+      window._fbDoc(window._db, 'restaurante', 'estado')
+    );
+    if(!snap.exists()){ showToast('☁️ Sin datos en la nube aún'); return; }
+    const d = snap.data();
+    if(d.orden)              orden = d.orden;
+    if(d.pedidos)            pedidos = d.pedidos;
+    if(d.pedidosEnCurso)     pedidosEnCurso = d.pedidosEnCurso;
+    if(d.contadorPedido)     contadorPedido = d.contadorPedido;
+    if(d.menuExtra)          menuExtra = d.menuExtra;
+    if(d.historialCierres)   historialCierres = d.historialCierres;
+    if(d.gastos)             gastos = d.gastos;
+    if(d.resumenMensual)     resumenMensual = d.resumenMensual;
+    if(d.inventario)         inventario = d.inventario;
+    if(d.vinculosInventario) vinculosInventario = d.vinculosInventario;
+    renderMenu();
+    actualizarOrdenPanel();
+    actualizarBadgeEnCurso();
+    renderHistorialCierres();
+    renderInventario();
+    verificarAlertasStock();
+    showToast('✅ Datos cargados desde la nube');
+  } catch(e){
+    console.warn('⚠ Error cargando Firebase:', e);
+    showToast('⚠ Error al conectar con la nube');
+  }
 }
 
 function seleccionarMetodo(metodo){
@@ -839,12 +927,25 @@ function renderMenu(){
           <button class="qty-btn plus" onclick="cambiarQty('${item.id}',1,event)">+</button>
         </div>
         ${acompHTML}
-        <div style="margin-top:7px;">
-  <div style="font-size:.62rem;color:var(--brown-mid);font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:3px;">📦 Inventario vinculado:</div>
-  <select id="inv-link-${item.id}" onchange="guardarVinculo('${item.id}',this.value)" style="width:100%;border:1.5px solid #e5d8c0;border-radius:6px;padding:4px 7px;font-family:'Lato',sans-serif;font-size:.72rem;color:var(--brown-dark);background:var(--white);outline:none;cursor:pointer;">
-    <option value="">— Sin vincular —</option>
-    ${inventario.map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('')}
-  </select>
+   <div style="margin-top:7px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+    <div style="font-size:.62rem;color:var(--brown-mid);font-weight:700;letter-spacing:.5px;text-transform:uppercase;">📦 Inventario vinculado:</div>
+    <button onclick="agregarCasillaVinculo('${item.id}')"
+      style="background:var(--brown-mid);color:#fff;border:none;border-radius:5px;
+             padding:2px 8px;font-family:'Oswald',sans-serif;font-size:.68rem;
+             font-weight:700;cursor:pointer;letter-spacing:.5px;">+ Añadir</button>
+  </div>
+  <div id="inv-links-cont-${item.id}">
+    <div style="display:flex;gap:4px;align-items:center;">
+      <select onchange="guardarVinculo('${item.id}',this.value,0)"
+        style="flex:1;border:1.5px solid #e5d8c0;border-radius:6px;padding:4px 7px;
+               font-family:'Lato',sans-serif;font-size:.72rem;color:var(--brown-dark);
+               background:var(--white);outline:none;cursor:pointer;">
+        <option value="">— Sin vincular —</option>
+        ${inventario.map(p=>`<option value="${p.id}">${p.nombre}</option>`).join('')}
+      </select>
+    </div>
+  </div>
 </div>
         <div class="opcional-row">
           <label class="opcional-check">
@@ -875,9 +976,22 @@ function renderMenu(){
         if(dp) dp.textContent='$'+orden[item.id].price.toLocaleString('es-CO');
       }
       // Restaurar vínculo inventario
-const sel=document.getElementById('inv-link-'+item.id);
-if(sel && vinculosInventario[item.id]){
-  sel.value=vinculosInventario[item.id];
+// Restaurar vínculos múltiples
+const links = vinculosInventario[item.id];
+if(links && links.length){
+  const cont = document.getElementById('inv-links-cont-' + item.id);
+  if(cont){
+    const linksArr = Array.isArray(links) ? links : [links];
+    // Restaurar el primero en el select ya existente
+    const primerSelect = cont.querySelector('select');
+    if(primerSelect && linksArr[0]) primerSelect.value = linksArr[0];
+    // Crear casillas adicionales para los demás
+    for(let i = 1; i < linksArr.length; i++){
+      agregarCasillaVinculo(item.id);
+      const selects = cont.querySelectorAll('select');
+      if(selects[i] && linksArr[i]) selects[i].value = linksArr[i];
+    }
+  }
 }
     });
   });
@@ -1003,40 +1117,62 @@ function confirmarPedido(){
   const domicilio=esDom?(parseInt(document.getElementById('inputDomicilio').value)||0):0;
   const direccion=esDom?(document.getElementById('inputDireccion').value.trim()||''):'';
   const total=getTotal();
+
   const itemsDetalle=Object.entries(orden).map(([id,i])=>{
-  const invId=vinculosInventario[id];
-  return {
-    texto:`${i.name}${i.acomp&&i.acomp!=='Bollo y Yuca'?' ('+i.acomp+')':''} x${i.qty} (${fmt(i.price*i.qty)})`,
-    invId: invId||null,
-    qty: i.qty,
-    name: i.name
-  };
-});
-const items=itemsDetalle.map(i=>i.texto);
-const itemsRef=itemsDetalle;
-const pedido={num:contadorPedido++,mesa,cliente,telefono,domicilio,direccion,total,metodoPago:'pendiente',items,itemsRef,hora:new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'})};
+    const invId=vinculosInventario[id];
+    return {
+      texto:`${i.name}${i.acomp&&i.acomp!=='Bollo y Yuca'?' ('+i.acomp+')':''} x${i.qty} (${fmt(i.price*i.qty)})`,
+      invId: invId||null,
+      qty: i.qty,
+      name: i.name
+    };
+  });
+  const items=itemsDetalle.map(i=>i.texto);
+  const itemsRef=itemsDetalle;
+  const pedido={num:contadorPedido++,mesa,cliente,telefono,domicilio,direccion,total,metodoPago:'pendiente',items,itemsRef,hora:new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'})};
   pedidosEnCurso.push(pedido);
+
   // Descontar del inventario automáticamente
-  Object.values(orden).forEach(item=>{
-    // Buscar por vínculo directo primero, luego por nombre
-    const itemId=Object.keys(orden).find(k=>orden[k]===item);
-    const invId=vinculosInventario[itemId];
-    const prod = invId
-      ? inventario.find(p=>String(p.id)===String(invId))
-      : inventario.find(p=>p.nombre.toLowerCase()===item.name.toLowerCase());
-    if(prod && prod.cantidad > 0){
-      const descuento = Math.min(item.qty, prod.cantidad);
-      prod.cantidad = Math.max(0, prod.cantidad - descuento);
-      prod.historial = prod.historial || [];
-      prod.historial.unshift({
-        tipo:'salida', cantidad:descuento,
-        motivo:`Venta — Pedido #${contadorPedido}`,
-        fecha:new Date().toLocaleDateString('es-CO',{day:'2-digit',month:'2-digit',year:'numeric'}),
-        hora:new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'})
+  Object.entries(orden).forEach(([itemId, item])=>{
+    const links = vinculosInventario[itemId];
+    const linksArr = links
+      ? (Array.isArray(links) ? links : [links]).filter(Boolean)
+      : [];
+
+    if(linksArr.length > 0){
+      linksArr.forEach(invId => {
+        const prod = inventario.find(p=>String(p.id)===String(invId));
+        if(prod && prod.cantidad > 0){
+          const descuento = Math.min(item.qty, prod.cantidad);
+          prod.cantidad = Math.max(0, prod.cantidad - descuento);
+          prod.historial = prod.historial || [];
+          prod.historial.unshift({
+            tipo:'salida', cantidad:descuento,
+            motivo:`Venta — Pedido #${contadorPedido}`,
+            fecha:new Date().toLocaleDateString('es-CO',{day:'2-digit',month:'2-digit',year:'numeric'}),
+            hora:new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'})
+          });
+          if(prod.historial.length>10) prod.historial=prod.historial.slice(0,10);
+        }
       });
-      if(prod.historial.length>10) prod.historial=prod.historial.slice(0,10);
+    } else {
+      // fallback: buscar por nombre
+      const prod = inventario.find(p=>p.nombre.toLowerCase()===item.name.toLowerCase());
+      if(prod && prod.cantidad > 0){
+        const descuento = Math.min(item.qty, prod.cantidad);
+        prod.cantidad = Math.max(0, prod.cantidad - descuento);
+        prod.historial = prod.historial || [];
+        prod.historial.unshift({
+          tipo:'salida', cantidad:descuento,
+          motivo:`Venta — Pedido #${contadorPedido}`,
+          fecha:new Date().toLocaleDateString('es-CO',{day:'2-digit',month:'2-digit',year:'numeric'}),
+          hora:new Date().toLocaleTimeString('es-CO',{hour:'2-digit',minute:'2-digit'})
+        });
+        if(prod.historial.length>10) prod.historial=prod.historial.slice(0,10);
+      }
     }
   });
+
   guardarEstado();
   showToast(`🔥 Pedido #${pedido.num} en curso — ${fmt(total)}`);
   imprimirComanda(pedido);
@@ -1656,12 +1792,22 @@ function actualizarCierre(){
 
   // Detalle productos
   const conteos={};
-  pedidos.forEach(p=>p.items.forEach(it=>{const n=it.split(' x')[0];conteos[n]=(conteos[n]||0)+1;}));
-  let det='<h3 style="font-family:Oswald;font-size:.77rem;letter-spacing:2px;color:var(--gold);text-transform:uppercase;margin-bottom:7px;">Detalle productos</h3>';
-  Object.entries(conteos).sort((a,b)=>b[1]-a[1]).forEach(([name,qty])=>{
-    det+=`<div style="display:flex;justify-content:space-between;font-size:.79rem;color:#c9b89a;margin-bottom:3px;"><span>${name}</span><span style="color:var(--gold);font-weight:700;">${qty} vendidos</span></div>`;
-  });
-  document.getElementById('cierreDetalle').innerHTML=det;
+pedidos.forEach(p=>p.items.forEach(it=>{
+  const match=it.match(/^(.+?) x(\d+)/);
+  if(match){
+    const nombre=match[1].trim();
+    const cantidad=parseInt(match[2])||1;
+    conteos[nombre]=(conteos[nombre]||0)+cantidad;
+  } else {
+    const nombre=it.split(' x')[0].trim();
+    conteos[nombre]=(conteos[nombre]||0)+1;
+  }
+}));
+let det='<h3 style="font-family:Oswald;font-size:.77rem;letter-spacing:2px;color:var(--gold);text-transform:uppercase;margin-bottom:7px;">Detalle productos</h3>';
+Object.entries(conteos).sort((a,b)=>b[1]-a[1]).forEach(([name,qty])=>{
+  det+=`<div style="display:flex;justify-content:space-between;font-size:.79rem;color:#c9b89a;margin-bottom:3px;"><span>${name}</span><span style="color:var(--gold);font-weight:700;">${qty} unidades</span></div>`;
+});
+document.getElementById('cierreDetalle').innerHTML=det;
 
   filtrarCierreUbicacion(filtroCierreUbicacion);
   filtrarCierre(filtroCierreActual);
@@ -2418,6 +2564,34 @@ function devolverACurso(num){
   actualizarCierre();
   showToast(`↩️ Pedido #${num} devuelto a En Curso`);
 }
+window.addEventListener('firebaseReady', () => {
+  cargarDesdeFirebase();
+});
+</script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAyWX0ccqTCpqTgaW3lcccuqTV88oLIMLc",
+    authDomain: "caja-delicias-pa-toditos.firebaseapp.com",
+    projectId: "caja-delicias-pa-toditos",
+    storageBucket: "caja-delicias-pa-toditos.firebasestorage.app",
+    messagingSenderId: "295617470338",
+    appId: "1:295617470338:web:868208e72058f2a01df99b"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+
+  window._fbDoc = doc;
+  window._fbSetDoc = setDoc;
+  window._fbGetDoc = getDoc;
+  window._db = db;
+
+  window.dispatchEvent(new Event('firebaseReady'));
+  
 </script>
 </body>
 </html>
